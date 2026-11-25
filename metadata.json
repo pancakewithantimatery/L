@@ -1,0 +1,6 @@
+{
+  "name": "Progressor",
+  "description": "Автономный прогрессор научных гипотез и верификаций на базе мультиагентного диалога моделей Venice.ai",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
