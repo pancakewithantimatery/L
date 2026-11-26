@@ -2,6 +2,16 @@ package com.example.domain
 
 import com.example.data.ProgressorRepository
 import com.example.data.SettingsManager
+import com.example.data.api.GeminiApiService
+import com.example.data.api.GeminiContentDto
+import com.example.data.api.GeminiGenerateRequest
+import com.example.data.api.GeminiPartDto
+import com.example.data.api.OllamaApiService
+import com.example.data.api.OllamaChatMessageDto
+import com.example.data.api.OllamaChatRequest
+import com.example.data.api.OpenRouterApiService
+import com.example.data.api.OpenRouterChatRequest
+import com.example.data.api.OpenRouterMessageDto
 import com.example.data.api.VeniceApiService
 import com.example.data.api.VeniceChatRequest
 import com.example.data.api.VeniceMessageDto
@@ -14,7 +24,10 @@ import kotlinx.coroutines.delay
 class ProgressorEngine(
     private val repository: ProgressorRepository,
     private val settingsManager: SettingsManager,
-    private val apiService: VeniceApiService
+    private val veniceApiService: VeniceApiService,
+    private val geminiApiService: GeminiApiService,
+    private val openRouterApiService: OpenRouterApiService,
+    private val ollamaApiService: OllamaApiService
 ) {
 
     data class ProgressState(
@@ -36,9 +49,6 @@ class ProgressorEngine(
     ): Result<EvolutionCycleEntity> {
         val session = repository.getSessionById(sessionId)
             ?: return Result.failure(IllegalArgumentException("Session not found: $sessionId"))
-
-        val apiKey = settingsManager.getApiKey()
-        val useRealApi = apiKey.isNotEmpty() && !settingsManager.isSimulationModeEnabled()
 
         // 1. Create and insert EvolutionCycle record in RUNNING state
         val cycleEntity = EvolutionCycleEntity(
@@ -74,13 +84,11 @@ class ProgressorEngine(
                 theoristModel = theoristModel
             )
 
-            val theoristResponseText = if (useRealApi) {
-                callVeniceApi(theoristModel, theoristPrompt, apiKey)
-                    .getOrElse { generateSimulatedTheorist(session.topic, cycleNumber, userGuidance) }
-            } else {
-                delay(1200) // realistic synthesis pacing
-                generateSimulatedTheorist(session.topic, cycleNumber, userGuidance)
-            }
+            val theoristResponseText = dispatchModelCall(theoristModel, theoristPrompt)
+                .getOrElse {
+                    delay(1200)
+                    generateSimulatedTheorist(session.topic, cycleNumber, userGuidance)
+                }
 
             // Save Theorist message
             repository.insertMessage(
@@ -111,13 +119,11 @@ class ProgressorEngine(
                 skepticModel = skepticModel
             )
 
-            val skepticResponseText = if (useRealApi) {
-                callVeniceApi(skepticModel, skepticPrompt, apiKey)
-                    .getOrElse { generateSimulatedSkeptic(session.topic, theoristResponseText) }
-            } else {
-                delay(1400)
-                generateSimulatedSkeptic(session.topic, theoristResponseText)
-            }
+            val skepticResponseText = dispatchModelCall(skepticModel, skepticPrompt)
+                .getOrElse {
+                    delay(1300)
+                    generateSimulatedSkeptic(session.topic, theoristResponseText)
+                }
 
             // Save Skeptic message
             repository.insertMessage(
@@ -149,13 +155,11 @@ class ProgressorEngine(
                 synthesizerModel = synthesizerModel
             )
 
-            val synthesizerResponseText = if (useRealApi) {
-                callVeniceApi(synthesizerModel, synthesizerPrompt, apiKey)
-                    .getOrElse { generateSimulatedSynthesizer(session.topic, theoristResponseText, skepticResponseText) }
-            } else {
-                delay(1300)
-                generateSimulatedSynthesizer(session.topic, theoristResponseText, skepticResponseText)
-            }
+            val synthesizerResponseText = dispatchModelCall(synthesizerModel, synthesizerPrompt)
+                .getOrElse {
+                    delay(1200)
+                    generateSimulatedSynthesizer(session.topic, theoristResponseText, skepticResponseText)
+                }
 
             // Save Synthesizer message
             repository.insertMessage(
@@ -234,6 +238,199 @@ class ProgressorEngine(
         }
     }
 
+    private suspend fun dispatchModelCall(
+        model: String,
+        prompt: String
+    ): Result<String> {
+        if (settingsManager.isSimulationModeEnabled()) {
+            return Result.failure(Exception("Режим симуляции включен"))
+        }
+
+        return when {
+            model.startsWith("ollama/", ignoreCase = true) -> {
+                val cleanModel = model.removePrefix("ollama/")
+                callOllamaApi(cleanModel, prompt)
+            }
+            model.contains("gemini", ignoreCase = true) -> {
+                val geminiKey = settingsManager.getGeminiApiKey()
+                if (geminiKey.isNotEmpty()) {
+                    callGeminiApi(model, prompt, geminiKey)
+                } else {
+                    Result.failure(Exception("Ключ Gemini API не настроен"))
+                }
+            }
+            model.contains("/") -> { // e.g. "anthropic/claude-3.5-sonnet", "openai/gpt-4o"
+                val openRouterKey = settingsManager.getOpenRouterApiKey()
+                if (openRouterKey.isNotEmpty()) {
+                    callOpenRouterApi(model, prompt, openRouterKey)
+                } else {
+                    Result.failure(Exception("Ключ OpenRouter API не настроен"))
+                }
+            }
+            else -> {
+                val veniceKey = settingsManager.getApiKey()
+                if (veniceKey.isNotEmpty()) {
+                    callVeniceApi(model, prompt, veniceKey)
+                } else {
+                    Result.failure(Exception("Ключ Venice.ai не настроен"))
+                }
+            }
+        }
+    }
+
+    suspend fun runGeminiLabAnalysis(
+        model: String,
+        prompt: String,
+        customSystemInstruction: String? = null
+    ): Result<String> {
+        val geminiKey = settingsManager.getGeminiApiKey()
+        if (geminiKey.isEmpty()) {
+            return Result.failure(Exception("API ключ Gemini не настроен. Укажите ключ в настройках."))
+        }
+        return callGeminiApi(model, prompt, geminiKey, customSystemInstruction)
+    }
+
+    suspend fun runOpenRouterLabAnalysis(
+        model: String,
+        prompt: String
+    ): Result<String> {
+        val key = settingsManager.getOpenRouterApiKey()
+        if (key.isEmpty()) {
+            return Result.failure(Exception("API ключ OpenRouter не настроен. Укажите ключ в настройках."))
+        }
+        return callOpenRouterApi(model, prompt, key)
+    }
+
+    suspend fun runOllamaLabAnalysis(
+        model: String,
+        prompt: String
+    ): Result<String> {
+        val cleanModel = if (model.startsWith("ollama/")) model.removePrefix("ollama/") else model
+        return callOllamaApi(cleanModel, prompt)
+    }
+
+    private suspend fun callGeminiApi(
+        model: String,
+        prompt: String,
+        apiKey: String,
+        systemInstructionText: String? = null
+    ): Result<String> {
+        return try {
+            val cleanModel = if (model.startsWith("models/")) model.removePrefix("models/") else model
+            val systemText = systemInstructionText
+                ?: "Ты — исследовательский интеллект Google Gemini в составе консорциума Прогрессор. Отвечай строго академически, предметно и структурированно на русском языке."
+
+            val request = GeminiGenerateRequest(
+                contents = listOf(
+                    GeminiContentDto(
+                        role = "user",
+                        parts = listOf(GeminiPartDto(text = prompt))
+                    )
+                ),
+                systemInstruction = GeminiContentDto(
+                    role = "system",
+                    parts = listOf(GeminiPartDto(text = systemText))
+                )
+            )
+
+            val response = geminiApiService.generateContent(cleanModel, apiKey, request)
+            if (response.isSuccessful) {
+                val text = response.body()?.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+                if (!text.isNullOrBlank()) {
+                    Result.success(text)
+                } else {
+                    Result.failure(Exception("Пустой ответ от Gemini ($cleanModel)"))
+                }
+            } else {
+                val code = response.code()
+                val errorBody = response.errorBody()?.string() ?: ""
+                Result.failure(Exception("Ошибка Gemini API $code: $errorBody"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private suspend fun callOpenRouterApi(
+        model: String,
+        prompt: String,
+        apiKey: String
+    ): Result<String> {
+        return try {
+            val request = OpenRouterChatRequest(
+                model = model,
+                messages = listOf(
+                    OpenRouterMessageDto(
+                        role = "system",
+                        content = "Ты — участник научно-исследовательского консорциума Прогрессор (OpenRouter multi-model router). Отвечай на русском языке строго академически, структурированно и предметно."
+                    ),
+                    OpenRouterMessageDto(
+                        role = "user",
+                        content = prompt
+                    )
+                ),
+                temperature = 0.7,
+                maxTokens = 2200
+            )
+
+            val response = openRouterApiService.createChatCompletion("Bearer $apiKey", request = request)
+            if (response.isSuccessful) {
+                val content = response.body()?.choices?.firstOrNull()?.message?.content
+                if (!content.isNullOrBlank()) {
+                    Result.success(content)
+                } else {
+                    Result.failure(Exception("Пустой ответ от OpenRouter ($model)"))
+                }
+            } else {
+                val code = response.code()
+                val errorBody = response.errorBody()?.string() ?: ""
+                Result.failure(Exception("Ошибка OpenRouter $code: $errorBody"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private suspend fun callOllamaApi(
+        model: String,
+        prompt: String
+    ): Result<String> {
+        return try {
+            val host = settingsManager.getOllamaHost()
+            val url = "$host/api/chat"
+            val request = OllamaChatRequest(
+                model = model,
+                messages = listOf(
+                    OllamaChatMessageDto(
+                        role = "system",
+                        content = "Ты — участник научно-исследовательского консорциума Прогрессор (Локальная LLM Ollama). Отвечай на русском языке строго академически, структурированно и предметно."
+                    ),
+                    OllamaChatMessageDto(
+                        role = "user",
+                        content = prompt
+                    )
+                ),
+                stream = false
+            )
+
+            val response = ollamaApiService.chat(url, request)
+            if (response.isSuccessful) {
+                val content = response.body()?.message?.content
+                if (!content.isNullOrBlank()) {
+                    Result.success(content)
+                } else {
+                    Result.failure(Exception("Пустой ответ от локального сервера Ollama ($model)"))
+                }
+            } else {
+                val code = response.code()
+                val errorBody = response.errorBody()?.string() ?: ""
+                Result.failure(Exception("Ошибка Ollama $code: $errorBody"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     private suspend fun callVeniceApi(
         model: String,
         prompt: String,
@@ -256,7 +453,7 @@ class ProgressorEngine(
                 maxTokens = 2200
             )
 
-            val response = apiService.createChatCompletion("Bearer $apiKey", request)
+            val response = veniceApiService.createChatCompletion("Bearer $apiKey", request)
             if (response.isSuccessful) {
                 val content = response.body()?.choices?.firstOrNull()?.message?.content
                 if (!content.isNullOrBlank()) {

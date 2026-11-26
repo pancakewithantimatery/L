@@ -189,19 +189,68 @@ fun ModelCouncilConfigDialog(
                     else -> CyanAccent
                 }
 
-                Text(
-                    text = "Выберите модель для роли:",
-                    color = TextSecondary,
-                    fontSize = 12.sp
-                )
+                var providerFilter by remember { mutableStateOf("ALL") } // ALL, VENICE, GEMINI
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Выберите модель:",
+                        color = TextSecondary,
+                        fontSize = 12.sp
+                    )
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                        listOf(
+                            "ALL" to "Все",
+                            "VENICE" to "Venice",
+                            "GEMINI" to "Gemini",
+                            "OPENROUTER" to "Router",
+                            "OLLAMA" to "Ollama"
+                        ).forEach { (key, label) ->
+                            val isChipSelected = providerFilter == key
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isChipSelected) currentRoleAccent.copy(alpha = 0.25f) else SurfaceCard)
+                                    .border(
+                                        0.5.dp,
+                                        if (isChipSelected) currentRoleAccent else BorderSubtle,
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .clickable { providerFilter = key }
+                                    .padding(horizontal = 5.dp, vertical = 2.5.dp)
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = if (isChipSelected) TextPrimary else TextSecondary,
+                                    fontSize = 9.5.sp,
+                                    fontWeight = if (isChipSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(6.dp))
+
+                val filteredModels = availableModels.filter {
+                    when (providerFilter) {
+                        "VENICE" -> it.provider == "VENICE"
+                        "GEMINI" -> it.provider == "GEMINI"
+                        "OPENROUTER" -> it.provider == "OPENROUTER"
+                        "OLLAMA" -> it.provider == "OLLAMA"
+                        else -> true
+                    }
+                }
 
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(210.dp)
+                        .height(200.dp)
                 ) {
-                    items(availableModels) { modelInfo ->
+                    items(filteredModels) { modelInfo ->
                         val isSelected = modelInfo.id == activeSelectedModel
                         ModelSelectionItem(
                             modelInfo = modelInfo,
@@ -361,7 +410,12 @@ private fun ModelSelectionItem(
                     ) {
                         Text(
                             text = modelInfo.tag,
-                            color = CyanAccent,
+                            color = when (modelInfo.provider) {
+                                "GEMINI" -> Color(0xFF4E80EE)
+                                "OPENROUTER" -> Color(0xFF6366F1)
+                                "OLLAMA" -> Color(0xFF10B981)
+                                else -> CyanAccent
+                            },
                             fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace
                         )
