@@ -11,9 +11,11 @@ import androidx.room.RoomDatabase
         EvolutionCycleEntity::class,
         AgentMessageEntity::class,
         ScientificHypothesisEntity::class,
-        VerificationScenarioEntity::class
+        VerificationScenarioEntity::class,
+        ScientificCitationEntity::class,
+        CustomAgentRoleEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

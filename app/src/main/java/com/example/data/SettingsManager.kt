@@ -1,8 +1,24 @@
 package com.example.data
 
 import android.content.Context
-import android.content.SharedPreferences
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
 import com.example.BuildConfig
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.runBlocking
+import java.io.IOException
+
+// Extension property for DataStore instance per application context
+val Context.progressorDataStore: DataStore<Preferences> by preferencesDataStore(name = "progressor_datastore_settings")
 
 data class VeniceModelInfo(
     val id: String,
@@ -13,20 +29,24 @@ data class VeniceModelInfo(
     val provider: String = "VENICE" // "VENICE", "GEMINI", "OPENROUTER", "OLLAMA"
 )
 
-class SettingsManager(context: Context) {
-
-    private val prefs: SharedPreferences =
-        context.getSharedPreferences("progressor_prefs", Context.MODE_PRIVATE)
+class SettingsManager(private val context: Context) {
 
     companion object {
-        private const val KEY_CUSTOM_API_KEY = "custom_venice_api_key"
-        private const val KEY_CUSTOM_GEMINI_KEY = "custom_gemini_api_key"
-        private const val KEY_CUSTOM_OPENROUTER_KEY = "custom_openrouter_api_key"
-        private const val KEY_OLLAMA_HOST = "ollama_host_url"
-        private const val KEY_SIMULATION_MODE = "simulation_mode_enabled"
-        private const val KEY_THEORIST_MODEL = "pref_theorist_model"
-        private const val KEY_SKEPTIC_MODEL = "pref_skeptic_model"
-        private const val KEY_SYNTHESIZER_MODEL = "pref_synthesizer_model"
+        val KEY_VENICE_API_KEY = stringPreferencesKey("venice_api_key")
+        val KEY_GEMINI_API_KEY = stringPreferencesKey("gemini_api_key")
+        val KEY_OPENROUTER_API_KEY = stringPreferencesKey("openrouter_api_key")
+        val KEY_OLLAMA_HOST_URL = stringPreferencesKey("ollama_host_url")
+        val KEY_SIMULATION_MODE = booleanPreferencesKey("simulation_mode")
+        val KEY_THEORIST_MODEL = stringPreferencesKey("theorist_model")
+        val KEY_SKEPTIC_MODEL = stringPreferencesKey("skeptic_model")
+        val KEY_SYNTHESIZER_MODEL = stringPreferencesKey("synthesizer_model")
+
+        // XREAL Air 2 Pro Spatial / Immersion Mode Preferences
+        val KEY_XREAL_SPATIAL_MODE = booleanPreferencesKey("xreal_spatial_mode")
+        val KEY_XREAL_AUTO_DETECT = booleanPreferencesKey("xreal_auto_detect")
+        val KEY_XREAL_ZERO_GRAVITY_LOCK = booleanPreferencesKey("xreal_zero_gravity_lock")
+        val KEY_XREAL_OVERSCAN_DP = intPreferencesKey("xreal_overscan_dp")
+        val KEY_XREAL_EYES_FREE_FEEDBACK = booleanPreferencesKey("xreal_eyes_free_feedback")
 
         val PRESET_VENICE_MODELS = listOf(
             VeniceModelInfo(
@@ -216,101 +236,254 @@ class SettingsManager(context: Context) {
             )
         )
 
-        // Combined default models
+        // Combined default models across all providers
         val PRESET_MODELS = PRESET_VENICE_MODELS + PRESET_GEMINI_MODELS + PRESET_OPENROUTER_MODELS + PRESET_OLLAMA_MODELS
     }
 
-    fun getApiKey(): String {
-        val customKey = prefs.getString(KEY_CUSTOM_API_KEY, null)?.trim()
-        if (!customKey.isNullOrEmpty()) {
-            return customKey
-        }
-        val buildConfigKey = runCatching { BuildConfig.VENICE_API_KEY }.getOrNull()?.trim()
-        return if (!buildConfigKey.isNullOrEmpty() && buildConfigKey != "PLACEHOLDER_VENICE_KEY") buildConfigKey else ""
+    private fun getBuildConfigVeniceKey(): String {
+        val key = runCatching { BuildConfig.VENICE_API_KEY }.getOrNull()?.trim()
+        return if (!key.isNullOrEmpty() && key != "PLACEHOLDER_VENICE_KEY") key else ""
     }
+
+    private fun getBuildConfigGeminiKey(): String {
+        val key = runCatching { BuildConfig.GEMINI_API_KEY }.getOrNull()?.trim()
+        return if (!key.isNullOrEmpty() && key != "DEFAULT_GEMINI_KEY") key else ""
+    }
+
+    private fun getBuildConfigOpenRouterKey(): String {
+        val key = runCatching { BuildConfig.OPENROUTER_API_KEY }.getOrNull()?.trim()
+        return if (!key.isNullOrEmpty() && key != "PLACEHOLDER_OPENROUTER_KEY") key else ""
+    }
+
+    private fun getBuildConfigOllamaHost(): String {
+        val host = runCatching { BuildConfig.OLLAMA_HOST_URL }.getOrNull()?.trim()
+        return if (!host.isNullOrEmpty()) host.removeSuffix("/") else "http://10.0.2.2:11434"
+    }
+
+    // --- Reactive DataStore Flows ---
+
+    val veniceApiKeyFlow: Flow<String> = context.progressorDataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { prefs ->
+            val saved = prefs[KEY_VENICE_API_KEY]?.trim()
+            if (!saved.isNullOrEmpty()) saved else getBuildConfigVeniceKey()
+        }
+
+    val geminiApiKeyFlow: Flow<String> = context.progressorDataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { prefs ->
+            val saved = prefs[KEY_GEMINI_API_KEY]?.trim()
+            if (!saved.isNullOrEmpty()) saved else getBuildConfigGeminiKey()
+        }
+
+    val openRouterApiKeyFlow: Flow<String> = context.progressorDataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { prefs ->
+            val saved = prefs[KEY_OPENROUTER_API_KEY]?.trim()
+            if (!saved.isNullOrEmpty()) saved else getBuildConfigOpenRouterKey()
+        }
+
+    val ollamaHostFlow: Flow<String> = context.progressorDataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { prefs ->
+            val saved = prefs[KEY_OLLAMA_HOST_URL]?.trim()
+            if (!saved.isNullOrEmpty()) saved.removeSuffix("/") else getBuildConfigOllamaHost()
+        }
+
+    val simulationModeFlow: Flow<Boolean> = context.progressorDataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { prefs -> prefs[KEY_SIMULATION_MODE] ?: false }
+
+    val theoristModelFlow: Flow<String> = context.progressorDataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { prefs -> prefs[KEY_THEORIST_MODEL] ?: "llama-3.3-70b" }
+
+    val skepticModelFlow: Flow<String> = context.progressorDataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { prefs -> prefs[KEY_SKEPTIC_MODEL] ?: "deepseek-r1-671b" }
+
+    val synthesizerModelFlow: Flow<String> = context.progressorDataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { prefs -> prefs[KEY_SYNTHESIZER_MODEL] ?: "qwen-2.5-72b" }
+
+    // --- XREAL Spatial / Immersion Mode Reactive Flows ---
+
+    val xrealSpatialModeFlow: Flow<Boolean> = context.progressorDataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { prefs -> prefs[KEY_XREAL_SPATIAL_MODE] ?: false }
+
+    val xrealAutoDetectFlow: Flow<Boolean> = context.progressorDataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { prefs -> prefs[KEY_XREAL_AUTO_DETECT] ?: true }
+
+    val xrealZeroGravityLockFlow: Flow<Boolean> = context.progressorDataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { prefs -> prefs[KEY_XREAL_ZERO_GRAVITY_LOCK] ?: true }
+
+    val xrealOverscanDpFlow: Flow<Int> = context.progressorDataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { prefs -> (prefs[KEY_XREAL_OVERSCAN_DP] ?: 28).coerceIn(24, 32) }
+
+    val xrealEyesFreeFeedbackFlow: Flow<Boolean> = context.progressorDataStore.data
+        .catch { exception ->
+            if (exception is IOException) emit(emptyPreferences()) else throw exception
+        }
+        .map { prefs -> prefs[KEY_XREAL_EYES_FREE_FEEDBACK] ?: true }
+
+    // --- Suspend DataStore Mutations ---
+
+    suspend fun setVeniceApiKey(key: String) {
+        context.progressorDataStore.edit { prefs ->
+            prefs[KEY_VENICE_API_KEY] = key.trim()
+        }
+    }
+
+    suspend fun setGeminiApiKey(key: String) {
+        context.progressorDataStore.edit { prefs ->
+            prefs[KEY_GEMINI_API_KEY] = key.trim()
+        }
+    }
+
+    suspend fun setOpenRouterApiKey(key: String) {
+        context.progressorDataStore.edit { prefs ->
+            prefs[KEY_OPENROUTER_API_KEY] = key.trim()
+        }
+    }
+
+    suspend fun setOllamaHost(url: String) {
+        val clean = url.trim().removeSuffix("/")
+        context.progressorDataStore.edit { prefs ->
+            prefs[KEY_OLLAMA_HOST_URL] = clean
+        }
+    }
+
+    suspend fun setSimulationMode(enabled: Boolean) {
+        context.progressorDataStore.edit { prefs ->
+            prefs[KEY_SIMULATION_MODE] = enabled
+        }
+    }
+
+    suspend fun setTheoristModel(model: String) {
+        context.progressorDataStore.edit { prefs ->
+            prefs[KEY_THEORIST_MODEL] = model
+        }
+    }
+
+    suspend fun setSkepticModel(model: String) {
+        context.progressorDataStore.edit { prefs ->
+            prefs[KEY_SKEPTIC_MODEL] = model
+        }
+    }
+
+    suspend fun setSynthesizerModel(model: String) {
+        context.progressorDataStore.edit { prefs ->
+            prefs[KEY_SYNTHESIZER_MODEL] = model
+        }
+    }
+
+    suspend fun setXrealSpatialMode(enabled: Boolean) {
+        context.progressorDataStore.edit { prefs ->
+            prefs[KEY_XREAL_SPATIAL_MODE] = enabled
+        }
+    }
+
+    suspend fun setXrealAutoDetect(enabled: Boolean) {
+        context.progressorDataStore.edit { prefs ->
+            prefs[KEY_XREAL_AUTO_DETECT] = enabled
+        }
+    }
+
+    suspend fun setXrealZeroGravityLock(enabled: Boolean) {
+        context.progressorDataStore.edit { prefs ->
+            prefs[KEY_XREAL_ZERO_GRAVITY_LOCK] = enabled
+        }
+    }
+
+    suspend fun setXrealOverscanDp(dpValue: Int) {
+        context.progressorDataStore.edit { prefs ->
+            prefs[KEY_XREAL_OVERSCAN_DP] = dpValue.coerceIn(24, 32)
+        }
+    }
+
+    suspend fun setXrealEyesFreeFeedback(enabled: Boolean) {
+        context.progressorDataStore.edit { prefs ->
+            prefs[KEY_XREAL_EYES_FREE_FEEDBACK] = enabled
+        }
+    }
+
+    // --- Synchronous Getters (with runBlocking & DataStore first()) for engine / startup compatibility ---
+
+    fun getApiKey(): String = runCatching {
+        runBlocking { veniceApiKeyFlow.first() }
+    }.getOrDefault(getBuildConfigVeniceKey())
 
     fun setCustomApiKey(key: String) {
-        prefs.edit().putString(KEY_CUSTOM_API_KEY, key.trim()).apply()
+        runBlocking { setVeniceApiKey(key) }
     }
 
-    fun isApiKeyConfigured(): Boolean {
-        return getApiKey().isNotEmpty()
-    }
+    fun isApiKeyConfigured(): Boolean = getApiKey().isNotEmpty()
 
-    fun getGeminiApiKey(): String {
-        val customKey = prefs.getString(KEY_CUSTOM_GEMINI_KEY, null)?.trim()
-        if (!customKey.isNullOrEmpty()) {
-            return customKey
-        }
-        val buildConfigKey = runCatching { BuildConfig.GEMINI_API_KEY }.getOrNull()?.trim()
-        return if (!buildConfigKey.isNullOrEmpty() && buildConfigKey != "DEFAULT_GEMINI_KEY") buildConfigKey else ""
-    }
+    fun getGeminiApiKey(): String = runCatching {
+        runBlocking { geminiApiKeyFlow.first() }
+    }.getOrDefault(getBuildConfigGeminiKey())
 
     fun setCustomGeminiApiKey(key: String) {
-        prefs.edit().putString(KEY_CUSTOM_GEMINI_KEY, key.trim()).apply()
+        runBlocking { setGeminiApiKey(key) }
     }
 
-    fun isGeminiKeyConfigured(): Boolean {
-        return getGeminiApiKey().isNotEmpty()
-    }
+    fun isGeminiKeyConfigured(): Boolean = getGeminiApiKey().isNotEmpty()
 
-    fun getOpenRouterApiKey(): String {
-        val customKey = prefs.getString(KEY_CUSTOM_OPENROUTER_KEY, null)?.trim()
-        if (!customKey.isNullOrEmpty()) {
-            return customKey
-        }
-        val buildConfigKey = runCatching { BuildConfig.OPENROUTER_API_KEY }.getOrNull()?.trim()
-        return if (!buildConfigKey.isNullOrEmpty() && buildConfigKey != "PLACEHOLDER_OPENROUTER_KEY") buildConfigKey else ""
-    }
+    fun getOpenRouterApiKey(): String = runCatching {
+        runBlocking { openRouterApiKeyFlow.first() }
+    }.getOrDefault(getBuildConfigOpenRouterKey())
 
     fun setCustomOpenRouterApiKey(key: String) {
-        prefs.edit().putString(KEY_CUSTOM_OPENROUTER_KEY, key.trim()).apply()
+        runBlocking { setOpenRouterApiKey(key) }
     }
 
-    fun isOpenRouterKeyConfigured(): Boolean {
-        return getOpenRouterApiKey().isNotEmpty()
-    }
+    fun isOpenRouterKeyConfigured(): Boolean = getOpenRouterApiKey().isNotEmpty()
 
-    fun getOllamaHost(): String {
-        val saved = prefs.getString(KEY_OLLAMA_HOST, null)?.trim()
-        if (!saved.isNullOrEmpty()) {
-            return saved.removeSuffix("/")
-        }
-        val buildConfigHost = runCatching { BuildConfig.OLLAMA_HOST_URL }.getOrNull()?.trim()
-        return if (!buildConfigHost.isNullOrEmpty()) buildConfigHost.removeSuffix("/") else "http://10.0.2.2:11434"
-    }
+    fun getOllamaHost(): String = runCatching {
+        runBlocking { ollamaHostFlow.first() }
+    }.getOrDefault(getBuildConfigOllamaHost())
 
-    fun setOllamaHost(url: String) {
-        val clean = url.trim().removeSuffix("/")
-        prefs.edit().putString(KEY_OLLAMA_HOST, clean).apply()
-    }
+    fun isSimulationModeEnabled(): Boolean = runCatching {
+        runBlocking { simulationModeFlow.first() }
+    }.getOrDefault(false)
 
-    fun isSimulationModeEnabled(): Boolean {
-        return prefs.getBoolean(KEY_SIMULATION_MODE, false)
-    }
+    fun getTheoristModel(): String = runCatching {
+        runBlocking { theoristModelFlow.first() }
+    }.getOrDefault("llama-3.3-70b")
 
-    fun setSimulationMode(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_SIMULATION_MODE, enabled).apply()
-    }
+    fun getSkepticModel(): String = runCatching {
+        runBlocking { skepticModelFlow.first() }
+    }.getOrDefault("deepseek-r1-671b")
 
-    fun getTheoristModel(): String =
-        prefs.getString(KEY_THEORIST_MODEL, "llama-3.3-70b") ?: "llama-3.3-70b"
-
-    fun setTheoristModel(model: String) {
-        prefs.edit().putString(KEY_THEORIST_MODEL, model).apply()
-    }
-
-    fun getSkepticModel(): String =
-        prefs.getString(KEY_SKEPTIC_MODEL, "deepseek-r1-671b") ?: "deepseek-r1-671b"
-
-    fun setSkepticModel(model: String) {
-        prefs.edit().putString(KEY_SKEPTIC_MODEL, model).apply()
-    }
-
-    fun getSynthesizerModel(): String =
-        prefs.getString(KEY_SYNTHESIZER_MODEL, "qwen-2.5-72b") ?: "qwen-2.5-72b"
-
-    fun setSynthesizerModel(model: String) {
-        prefs.edit().putString(KEY_SYNTHESIZER_MODEL, model).apply()
-    }
+    fun getSynthesizerModel(): String = runCatching {
+        runBlocking { synthesizerModelFlow.first() }
+    }.getOrDefault("qwen-2.5-72b")
 }

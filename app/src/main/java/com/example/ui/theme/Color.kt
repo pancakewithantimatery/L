@@ -27,3 +27,16 @@ val RoseWarning = Color(0xFFF43F5E)
 val TextPrimary = Color(0xFFF1F5F9)
 val TextSecondary = Color(0xFF94A3B8)
 val TextMuted = Color(0xFF64748B)
+
+// Provider Specific Accents
+val GeminiBlueAccent = Color(0xFF4285F4)
+val OpenRouterAccent = Color(0xFF6366F1)
+val OllamaAccent = Color(0xFF10B981)
+
+// XREAL Air 2 Pro Micro-OLED True Black Palette (0% pixel emission on black)
+val TrueBlackOled = Color(0xFF000000)
+val OledBorderCrisp = Color(0xFF334155)
+val OledHoverGlow = Color(0xFF38BDF8)
+val OledFocusRing = Color(0xFF22D3EE)
+
+

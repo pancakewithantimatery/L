@@ -54,6 +54,7 @@ import com.example.ui.theme.SurfaceCard
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.spatialCardColor
 
 @Composable
 fun VerificationScenarioCard(
@@ -71,8 +72,8 @@ fun VerificationScenarioCard(
             .padding(vertical = 8.dp)
             .testTag("scenario_card_${scenario.id}"),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = SurfaceCard),
-        border = androidx.compose.foundation.BorderStroke(1.dp, AmberSkeptic.copy(alpha = 0.45f))
+        colors = CardDefaults.cardColors(containerColor = spatialCardColor()),
+        border = androidx.compose.foundation.BorderStroke(1.dp, AmberSkeptic.copy(alpha = 0.55f))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             // Header

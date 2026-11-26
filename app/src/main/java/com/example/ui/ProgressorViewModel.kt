@@ -5,25 +5,41 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.KeepBufferExporter
+import com.example.data.KeepBufferPayload
+import com.example.data.LatexExporter
 import com.example.data.MarkdownExporter
 import com.example.data.ProgressorRepository
 import com.example.data.SettingsManager
 import com.example.data.VeniceModelInfo
+import com.example.data.api.ArxivApiService
+import com.example.data.api.ArxivPaper
 import com.example.data.api.GeminiApiService
 import com.example.data.api.OllamaApiService
 import com.example.data.api.OpenRouterApiService
 import com.example.data.api.VeniceApiService
 import com.example.data.local.AgentMessageEntity
 import com.example.data.local.AppDatabase
+import com.example.data.local.CustomAgentRoleEntity
 import com.example.data.local.EvolutionCycleEntity
 import com.example.data.local.ResearchSessionEntity
+import com.example.data.local.ScientificCitationEntity
 import com.example.data.local.ScientificHypothesisEntity
 import com.example.data.local.VerificationScenarioEntity
+import com.example.domain.DebateTtsManager
 import com.example.domain.ProgressorEngine
+import com.example.domain.TtsPlaybackState
+import com.example.domain.VoiceCommand
+import com.example.domain.VoiceCommandManager
+import com.example.domain.VoiceCommandParser
+import com.example.domain.VoiceControlState
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
@@ -42,6 +58,23 @@ class ProgressorViewModel(application: Application) : AndroidViewModel(applicati
     private val geminiApiService = GeminiApiService.create()
     private val openRouterApiService = OpenRouterApiService.create()
     private val ollamaApiService = OllamaApiService.create()
+    private val arxivApiService = ArxivApiService()
+    private val ttsManager = DebateTtsManager(application)
+
+    private val _voiceCommands = MutableSharedFlow<VoiceCommand>(extraBufferCapacity = 8)
+    val voiceCommands: SharedFlow<VoiceCommand> = _voiceCommands.asSharedFlow()
+
+    private val voiceCommandManager = VoiceCommandManager(
+        context = application,
+        onBeforeStartListening = {
+            if (ttsManager.state.value.isPlaying) {
+                ttsManager.pause()
+            }
+        },
+        onCommandRecognized = { command, _ ->
+            _voiceCommands.tryEmit(command)
+        }
+    )
 
     private val engine = ProgressorEngine(
         repository = repository,
@@ -54,6 +87,12 @@ class ProgressorViewModel(application: Application) : AndroidViewModel(applicati
 
     val allSessions: StateFlow<List<ResearchSessionEntity>> = repository.allSessions
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val customRoles: StateFlow<List<CustomAgentRoleEntity>> = repository.allCustomRoles
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val ttsState: StateFlow<TtsPlaybackState> = ttsManager.state
+    val voiceState: StateFlow<VoiceControlState> = voiceCommandManager.state
 
     private val _activeSessionId = MutableStateFlow<Long?>(null)
     val activeSessionId: StateFlow<Long?> = _activeSessionId.asStateFlow()
@@ -76,6 +115,20 @@ class ProgressorViewModel(application: Application) : AndroidViewModel(applicati
     val currentScenarios: StateFlow<List<VerificationScenarioEntity>> = _activeSessionId.flatMapLatest { id ->
         if (id != null) repository.getScenariosForSession(id) else flowOf(emptyList())
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val currentCitations: StateFlow<List<ScientificCitationEntity>> = _activeSessionId.flatMapLatest { id ->
+        if (id != null) repository.getCitationsForSession(id) else flowOf(emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // arXiv Search State
+    private val _arxivSearchResults = MutableStateFlow<List<ArxivPaper>>(emptyList())
+    val arxivSearchResults: StateFlow<List<ArxivPaper>> = _arxivSearchResults.asStateFlow()
+
+    private val _isSearchingArxiv = MutableStateFlow(false)
+    val isSearchingArxiv: StateFlow<Boolean> = _isSearchingArxiv.asStateFlow()
+
+    private val _arxivError = MutableStateFlow<String?>(null)
+    val arxivError: StateFlow<String?> = _arxivError.asStateFlow()
 
     private val _isCycleRunning = MutableStateFlow(false)
     val isCycleRunning: StateFlow<Boolean> = _isCycleRunning.asStateFlow()
@@ -136,7 +189,43 @@ class ProgressorViewModel(application: Application) : AndroidViewModel(applicati
     private val _isSimulationMode = MutableStateFlow(settingsManager.isSimulationModeEnabled())
     val isSimulationMode: StateFlow<Boolean> = _isSimulationMode.asStateFlow()
 
+    // --- XREAL Air 2 Pro Spatial / Multi-Window States ---
+    val xrealSpatialMode: StateFlow<Boolean> = settingsManager.xrealSpatialModeFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val xrealAutoDetect: StateFlow<Boolean> = settingsManager.xrealAutoDetectFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
+    val xrealZeroGravityLock: StateFlow<Boolean> = settingsManager.xrealZeroGravityLockFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
+    val xrealOverscanDp: StateFlow<Int> = settingsManager.xrealOverscanDpFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 28)
+
+    val xrealEyesFreeFeedback: StateFlow<Boolean> = settingsManager.xrealEyesFreeFeedbackFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
     init {
+        // Collect reactive DataStore flows
+        viewModelScope.launch {
+            settingsManager.veniceApiKeyFlow.collect { _apiKey.value = it }
+        }
+        viewModelScope.launch {
+            settingsManager.geminiApiKeyFlow.collect { _geminiApiKey.value = it }
+        }
+        viewModelScope.launch {
+            settingsManager.openRouterApiKeyFlow.collect { _openRouterApiKey.value = it }
+        }
+        viewModelScope.launch {
+            settingsManager.ollamaHostFlow.collect { _ollamaHost.value = it }
+        }
+        viewModelScope.launch {
+            settingsManager.simulationModeFlow.collect { _isSimulationMode.value = it }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.ensureDefaultCustomRolesSeeded()
+        }
+
         // Automatically select the most recent session or create an initial starter if none exists
         viewModelScope.launch {
             repository.allSessions.collect { list ->
@@ -253,41 +342,131 @@ class ProgressorViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun saveApiKey(key: String) {
-        settingsManager.setCustomApiKey(key)
-        _apiKey.value = settingsManager.getApiKey()
-        refreshModelsFromVenice()
+        viewModelScope.launch {
+            settingsManager.setVeniceApiKey(key)
+            refreshModelsFromVenice()
+        }
     }
 
     fun saveGeminiApiKey(key: String) {
-        settingsManager.setCustomGeminiApiKey(key)
-        _geminiApiKey.value = settingsManager.getGeminiApiKey()
-        refreshGeminiModels()
+        viewModelScope.launch {
+            settingsManager.setGeminiApiKey(key)
+            refreshGeminiModels()
+        }
     }
 
     fun saveOpenRouterApiKey(key: String) {
-        settingsManager.setCustomOpenRouterApiKey(key)
-        _openRouterApiKey.value = settingsManager.getOpenRouterApiKey()
-        refreshOpenRouterModels()
+        viewModelScope.launch {
+            settingsManager.setOpenRouterApiKey(key)
+            refreshOpenRouterModels()
+        }
     }
 
     fun saveOllamaHost(host: String) {
-        settingsManager.setOllamaHost(host)
-        _ollamaHost.value = settingsManager.getOllamaHost()
-        refreshOllamaModels()
+        viewModelScope.launch {
+            settingsManager.setOllamaHost(host)
+            refreshOllamaModels()
+        }
     }
 
     fun toggleSimulationMode(enabled: Boolean) {
-        settingsManager.setSimulationMode(enabled)
-        _isSimulationMode.value = enabled
+        viewModelScope.launch {
+            settingsManager.setSimulationMode(enabled)
+        }
+    }
+
+    fun testVeniceConnection(key: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val res = veniceApiService.listModels("Bearer $key")
+                val count = res.body()?.data?.size ?: 0
+                withContext(Dispatchers.Main) {
+                    if (res.isSuccessful && count > 0) {
+                        onResult(true, "Успешно: доступно $count моделей Venice.ai")
+                    } else {
+                        onResult(false, "Ошибка ответа Venice: HTTP ${res.code()}")
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Ошибка подключения: ${e.localizedMessage ?: "Network error"}")
+                }
+            }
+        }
+    }
+
+    fun testOpenRouterConnection(key: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val res = openRouterApiService.listModels("Bearer $key")
+                val count = res.body()?.data?.size ?: 0
+                withContext(Dispatchers.Main) {
+                    if (res.isSuccessful && count > 0) {
+                        onResult(true, "Успешно: доступно $count моделей OpenRouter")
+                    } else {
+                        onResult(false, "Ошибка OpenRouter: HTTP ${res.code()}")
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Ошибка подключения: ${e.localizedMessage ?: "Network error"}")
+                }
+            }
+        }
+    }
+
+    fun testOllamaConnection(hostUrl: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val clean = hostUrl.trim().removeSuffix("/")
+                val versionRes = ollamaApiService.checkVersion("$clean/api/version")
+                val tagsRes = ollamaApiService.listModels("$clean/api/tags")
+                withContext(Dispatchers.Main) {
+                    if (tagsRes.isSuccessful) {
+                        val count = tagsRes.body()?.models?.size ?: 0
+                        val version = versionRes.body()?.version ?: "OK"
+                        onResult(true, "Ollama онлайн (v$version): $count локальных моделей")
+                    } else {
+                        onResult(false, "Сервер Ollama вернул ошибку HTTP ${tagsRes.code()}")
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Недоступен: ${e.localizedMessage ?: "Connection refused"}")
+                }
+            }
+        }
+    }
+
+    fun testGeminiConnection(key: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val res = geminiApiService.listModels(key)
+                val count = res.body()?.models?.size ?: 0
+                withContext(Dispatchers.Main) {
+                    if (res.isSuccessful && count > 0) {
+                        onResult(true, "Успешно: доступно $count моделей Gemini")
+                    } else {
+                        onResult(false, "Ошибка Gemini API: HTTP ${res.code()}")
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Ошибка подключения: ${e.localizedMessage ?: "Network error"}")
+                }
+            }
+        }
     }
 
     fun setModelsForNextCycle(theorist: String, skeptic: String, synthesizer: String) {
         _selectedTheoristModel.value = theorist
         _selectedSkepticModel.value = skeptic
         _selectedSynthesizerModel.value = synthesizer
-        settingsManager.setTheoristModel(theorist)
-        settingsManager.setSkepticModel(skeptic)
-        settingsManager.setSynthesizerModel(synthesizer)
+        viewModelScope.launch {
+            settingsManager.setTheoristModel(theorist)
+            settingsManager.setSkepticModel(skeptic)
+            settingsManager.setSynthesizerModel(synthesizer)
+        }
 
         val sessionId = _activeSessionId.value
         if (sessionId != null) {
@@ -495,6 +674,227 @@ class ProgressorViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    // --- arXiv & DOI Search & Citations ---
+    fun searchArxiv(query: String) {
+        if (query.isBlank()) return
+        viewModelScope.launch {
+            _isSearchingArxiv.value = true
+            _arxivError.value = null
+            val res = arxivApiService.searchPapers(query, maxResults = 10)
+            res.onSuccess { papers ->
+                _arxivSearchResults.value = papers
+                if (papers.isEmpty()) {
+                    _arxivError.value = "По запросу ничего не найдено. Попробуйте англоязычные термины."
+                }
+            }.onFailure { err ->
+                _arxivError.value = err.localizedMessage ?: "Ошибка подключения к arXiv"
+            }
+            _isSearchingArxiv.value = false
+        }
+    }
+
+    fun pinArxivPaper(paper: ArxivPaper) {
+        val sessionId = _activeSessionId.value ?: return
+        if (currentCitations.value.any { it.arxivId == paper.arxivId }) return
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.insertCitation(
+                ScientificCitationEntity(
+                    sessionId = sessionId,
+                    arxivId = paper.arxivId,
+                    doi = paper.doi,
+                    title = paper.title,
+                    authors = paper.authors.joinToString(", "),
+                    summary = paper.summary,
+                    publishedYear = paper.publishedYear,
+                    pdfUrl = paper.pdfUrl
+                )
+            )
+        }
+    }
+
+    fun deleteCitation(citationId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteCitation(citationId)
+        }
+    }
+
+    fun injectPaperIntoCycle(paper: ArxivPaper) {
+        val doiSuffix = if (!paper.doi.isNullOrBlank()) ", DOI: ${paper.doi}" else ""
+        val guidance = "Учти реальную публикацию arXiv:${paper.arxivId}$doiSuffix — «${paper.title}» (${paper.publishedYear}). Сопоставь нашу гипотезу с её выводами."
+        sendHumanIntervention(guidance)
+    }
+
+    // --- Custom Council Roles ---
+    fun saveCustomRole(role: CustomAgentRoleEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.saveCustomRole(role)
+        }
+    }
+
+    fun toggleCustomRole(role: CustomAgentRoleEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.toggleCustomRoleActivation(role)
+        }
+    }
+
+    fun deleteCustomRole(roleId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteCustomRole(roleId)
+        }
+    }
+
+    // --- Debate TTS Podcast Controls ---
+    fun toggleTtsPlayback(startMessageId: Long? = null) {
+        ttsManager.playOrPause(currentMessages.value, startMessageId)
+    }
+
+    fun ttsNext() {
+        ttsManager.next(currentMessages.value)
+    }
+
+    fun ttsPrevious() {
+        ttsManager.previous(currentMessages.value)
+    }
+
+    fun ttsCycleSpeed() {
+        ttsManager.cycleSpeed()
+    }
+
+    fun ttsStop() {
+        ttsManager.stop()
+    }
+
+    // --- XREAL Air 2 Pro Spatial / Multi-Window Controls ---
+    fun setXrealSpatialMode(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsManager.setXrealSpatialMode(enabled)
+        }
+    }
+
+    fun setXrealAutoDetect(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsManager.setXrealAutoDetect(enabled)
+        }
+    }
+
+    fun setXrealZeroGravityLock(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsManager.setXrealZeroGravityLock(enabled)
+        }
+    }
+
+    fun setXrealOverscanDp(dpValue: Int) {
+        viewModelScope.launch {
+            settingsManager.setXrealOverscanDp(dpValue)
+        }
+    }
+
+    fun setXrealEyesFreeFeedback(enabled: Boolean) {
+        viewModelScope.launch {
+            settingsManager.setXrealEyesFreeFeedback(enabled)
+        }
+    }
+
+    fun announceEyesFree(phrase: String, forceInterrupt: Boolean = false) {
+        if (xrealEyesFreeFeedback.value) {
+            ttsManager.announceConfirmation(phrase, forceInterrupt)
+        }
+    }
+
+    // --- Hands-Free Voice Control (Android SpeechRecognizer) ---
+    fun toggleVoiceListening() {
+        voiceCommandManager.toggleSingleListening()
+    }
+
+    fun setHandsFreeVoiceMode(enabled: Boolean) {
+        voiceCommandManager.setHandsFreeMode(enabled)
+    }
+
+    fun reportVoicePermissionDenied() {
+        voiceCommandManager.reportPermissionDenied()
+    }
+
+    fun stopVoiceListening() {
+        voiceCommandManager.stopAll()
+    }
+
+    fun clearVoiceStatusBanner() {
+        voiceCommandManager.clearStatusBanner()
+    }
+
+    fun dispatchVoiceSamplePhrase(phrase: String) {
+        val parsed = VoiceCommandParser.parse(phrase)
+        _voiceCommands.tryEmit(parsed)
+    }
+
+    /**
+     * Builds a clean cross-posting summary (latest thesis, final synthesis, Popper criterion, arXiv refs)
+     * ready to paste directly into neighboring spatial windows (OpenRouter, Venice, Gemini).
+     */
+    fun buildCrossPostSynthesisText(): String {
+        val session = _activeSession.value ?: return ""
+        val latestHyp = currentHypotheses.value.firstOrNull()
+        val latestScen = currentScenarios.value.firstOrNull()
+        val latestSynthMsg = currentMessages.value.lastOrNull { it.role == "SYNTHESIZER" }
+            ?: currentMessages.value.lastOrNull()
+        val citations = currentCitations.value
+
+        return buildString {
+            appendLine("=== ПРОГРЕССОР | КРОСС-ПОСТИНГ СИНТЕЗА ===")
+            appendLine("Тема: ${session.topic} (${session.domain}) • Цикл #${session.totalCycles}")
+            if (latestHyp != null) {
+                appendLine()
+                appendLine("ГИПОТЕЗА: ${latestHyp.title}")
+                appendLine("ТЕЗИС: ${latestHyp.thesis}")
+                appendLine("МЕХАНИЗМ: ${latestHyp.mechanism}")
+            }
+            if (latestScen != null) {
+                appendLine()
+                appendLine("КРИТЕРИЙ ФАЛЬСИФИКАЦИИ (ПОППЕР): ${latestScen.falsificationCriteria}")
+            }
+            if (latestSynthMsg != null) {
+                appendLine()
+                appendLine("ИТОГОВЫЙ СИНТЕЗ (${latestSynthMsg.modelName}):")
+                appendLine(latestSynthMsg.content)
+            }
+            if (citations.isNotEmpty()) {
+                appendLine()
+                appendLine("ИСТОЧНИКИ arXiv/DOI:")
+                citations.forEach { cit ->
+                    val doiPart = if (!cit.doi.isNullOrBlank()) " | DOI:${cit.doi}" else ""
+                    appendLine("- ${cit.title} (${cit.publishedYear}) arXiv:${cit.arxivId}$doiPart")
+                }
+            }
+        }.trim()
+    }
+
+    /**
+     * Generates a high-density operational buffer summary of the current session
+     * tailored for Google Keep (Context/Thesis, Verified Facts + arXiv, Checklist).
+     */
+    fun buildKeepBufferPayload(): KeepBufferPayload? {
+        val session = _activeSession.value ?: return null
+        return KeepBufferExporter.generateSessionBuffer(
+            session = session,
+            cycles = currentCycles.value,
+            messages = currentMessages.value,
+            hypotheses = currentHypotheses.value,
+            scenarios = currentScenarios.value,
+            citations = currentCitations.value
+        )
+    }
+
+    /**
+     * Generates a compact Google Keep operational buffer note from a specific Arena message.
+     */
+    fun buildMessageKeepBufferPayload(message: AgentMessageEntity): KeepBufferPayload {
+        return KeepBufferExporter.generateMessageBuffer(
+            session = _activeSession.value,
+            message = message,
+            citations = currentCitations.value
+        )
+    }
+
     fun generateMarkdownReport(): String {
         val session = _activeSession.value ?: return "# Нет активной сессии"
         return MarkdownExporter.generateMarkdown(
@@ -502,12 +902,36 @@ class ProgressorViewModel(application: Application) : AndroidViewModel(applicati
             cycles = currentCycles.value,
             messages = currentMessages.value,
             hypotheses = currentHypotheses.value,
-            scenarios = currentScenarios.value
+            scenarios = currentScenarios.value,
+            citations = currentCitations.value
         )
     }
 
     fun exportMarkdownToFile(context: Context, uri: Uri): Boolean {
         val content = generateMarkdownReport()
         return MarkdownExporter.writeMarkdownToUri(context, uri, content)
+    }
+
+    fun generateLatexReport(): String {
+        val session = _activeSession.value ?: return "% Нет активной сессии"
+        return LatexExporter.generateLatex(
+            session = session,
+            cycles = currentCycles.value,
+            messages = currentMessages.value,
+            hypotheses = currentHypotheses.value,
+            scenarios = currentScenarios.value,
+            citations = currentCitations.value
+        )
+    }
+
+    fun exportLatexToFile(context: Context, uri: Uri): Boolean {
+        val content = generateLatexReport()
+        return LatexExporter.writeLatexToUri(context, uri, content)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        voiceCommandManager.destroy()
+        ttsManager.shutdown()
     }
 }

@@ -77,6 +77,9 @@ import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.VoidDark
+import com.example.ui.theme.spatialCanvasColor
+import com.example.ui.theme.spatialCardColor
+import com.example.ui.theme.spatialCardHighlightColor
 
 val OpenRouterAccent = Color(0xFF6366F1)
 val OllamaAccent = Color(0xFF10B981)
@@ -140,13 +143,13 @@ fun AiLabScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(VoidDark)
+            .background(spatialCanvasColor())
             .padding(horizontal = 14.dp, vertical = 6.dp)
     ) {
         // Top Provider Tabs
         TabRow(
             selectedTabIndex = selectedLabTab,
-            containerColor = SurfaceCard,
+            containerColor = spatialCardColor(),
             contentColor = currentAccentColor,
             indicator = { tabPositions ->
                 TabRowDefaults.SecondaryIndicator(
@@ -223,7 +226,7 @@ fun AiLabScreen(
                             .fillMaxWidth()
                             .padding(bottom = 10.dp),
                         shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = SurfaceCard),
+                        colors = CardDefaults.cardColors(containerColor = spatialCardColor()),
                         border = androidx.compose.foundation.BorderStroke(1.dp, OllamaAccent.copy(alpha = 0.5f))
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
@@ -356,7 +359,7 @@ fun AiLabScreen(
                                 .testTag("lab_chip_${model.id}"),
                             shape = RoundedCornerShape(10.dp),
                             colors = CardDefaults.cardColors(
-                                containerColor = if (isSelected) SurfaceCardHighlight else SurfaceCard
+                                containerColor = if (isSelected) spatialCardHighlightColor() else spatialCardColor()
                             ),
                             border = if (isSelected) {
                                 androidx.compose.foundation.BorderStroke(1.5.dp, currentAccentColor)
@@ -421,7 +424,7 @@ fun AiLabScreen(
                                 .clickable { customPrompt = promptText }
                                 .testTag("quick_action_${label}"),
                             shape = RoundedCornerShape(8.dp),
-                            colors = CardDefaults.cardColors(containerColor = SurfaceCard),
+                            colors = CardDefaults.cardColors(containerColor = spatialCardColor()),
                             border = androidx.compose.foundation.BorderStroke(0.5.dp, BorderSubtle)
                         ) {
                             Text(
@@ -523,7 +526,7 @@ fun AiLabScreen(
                             .padding(bottom = 16.dp)
                             .testTag("lab_result_card"),
                         shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = SurfaceCard),
+                        colors = CardDefaults.cardColors(containerColor = spatialCardColor()),
                         border = androidx.compose.foundation.BorderStroke(1.dp, currentAccentColor.copy(alpha = 0.5f))
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {

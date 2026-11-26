@@ -39,20 +39,24 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.ScientificHypothesisEntity
+import com.example.ui.spatial.performSpatialHaptic
+import com.example.ui.spatial.spatialInteractive
 import com.example.ui.theme.CyanAccent
-import com.example.ui.theme.DeepSpace
+import com.example.ui.theme.LocalSpatialConfig
 import com.example.ui.theme.PurpleTheorist
 import com.example.ui.theme.PurpleTheoristLight
-import com.example.ui.theme.SurfaceCard
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.spatialCardColor
+import com.example.ui.theme.spatialSurfaceColor
 
 @Composable
 fun HypothesisCard(
@@ -62,6 +66,8 @@ fun HypothesisCard(
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val haptic = LocalHapticFeedback.current
+    val spatialConfig = LocalSpatialConfig.current
     var isExpanded by remember { mutableStateOf(true) }
 
     Card(
@@ -70,8 +76,8 @@ fun HypothesisCard(
             .padding(vertical = 8.dp)
             .testTag("hypothesis_card_${hypothesis.id}"),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = SurfaceCard),
-        border = androidx.compose.foundation.BorderStroke(1.dp, PurpleTheorist.copy(alpha = 0.4f))
+        colors = CardDefaults.cardColors(containerColor = spatialCardColor()),
+        border = androidx.compose.foundation.BorderStroke(1.dp, PurpleTheorist.copy(alpha = 0.55f))
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             // Header Row
@@ -130,6 +136,7 @@ fun HypothesisCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(
                         onClick = {
+                            performSpatialHaptic(context, haptic, spatialConfig.isEyesFreeFeedbackEnabled)
                             val shareText = "ГИПОТЕЗА: ${hypothesis.title}\n\n" +
                                     "ТЕЗИС:\n${hypothesis.thesis}\n\n" +
                                     "МЕХАНИЗМ:\n${hypothesis.mechanism}\n\n" +
@@ -138,7 +145,9 @@ fun HypothesisCard(
                             clipboard.setText(AnnotatedString(shareText))
                             Toast.makeText(context, "Гипотеза скопирована", Toast.LENGTH_SHORT).show()
                         },
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier
+                            .size(36.dp)
+                            .spatialInteractive(accentColor = CyanAccent, shape = CircleShape)
                     ) {
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
@@ -149,7 +158,9 @@ fun HypothesisCard(
                     }
                     IconButton(
                         onClick = { isExpanded = !isExpanded },
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier
+                            .size(36.dp)
+                            .spatialInteractive(accentColor = PurpleTheorist, shape = CircleShape)
                     ) {
                         Icon(
                             imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
@@ -168,7 +179,7 @@ fun HypothesisCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
-                    .background(DeepSpace)
+                    .background(spatialSurfaceColor())
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -189,7 +200,7 @@ fun HypothesisCard(
                             .height(5.dp)
                             .clip(RoundedCornerShape(3.dp)),
                         color = PurpleTheorist,
-                        trackColor = SurfaceCard,
+                        trackColor = spatialCardColor(),
                         strokeCap = StrokeCap.Round,
                     )
                 }
@@ -212,7 +223,7 @@ fun HypothesisCard(
                             .height(5.dp)
                             .clip(RoundedCornerShape(3.dp)),
                         color = CyanAccent,
-                        trackColor = SurfaceCard,
+                        trackColor = spatialCardColor(),
                         strokeCap = StrokeCap.Round,
                     )
                 }

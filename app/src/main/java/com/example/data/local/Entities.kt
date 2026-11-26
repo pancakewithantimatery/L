@@ -121,3 +121,42 @@ data class VerificationScenarioEntity(
     val feasibilityScore: Int = 80,
     val createdAt: Long = System.currentTimeMillis()
 )
+
+@Entity(
+    tableName = "scientific_citations",
+    foreignKeys = [
+        ForeignKey(
+            entity = ResearchSessionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index(value = ["sessionId"])]
+)
+data class ScientificCitationEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sessionId: Long,
+    val arxivId: String,
+    val doi: String? = null,
+    val title: String,
+    val authors: String,
+    val summary: String,
+    val publishedYear: String,
+    val pdfUrl: String,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "custom_agent_roles")
+data class CustomAgentRoleEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val baseSlot: String, // THEORIST, SKEPTIC, SYNTHESIZER
+    val systemPrompt: String,
+    val temperature: Float = 0.7f,
+    val accentColorHex: String = "#A855F7",
+    val isActive: Boolean = false,
+    val isPreset: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis()
+)
+

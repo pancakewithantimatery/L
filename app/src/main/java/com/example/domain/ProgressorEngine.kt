@@ -67,10 +67,30 @@ class ProgressorEngine(
         repository.updateSessionStatus(sessionId, "RUNNING", cycleNumber)
 
         try {
+            // Load active custom roles and pinned arXiv/DOI bibliography for this session
+            val customTheorist = repository.getActiveRoleForSlot("THEORIST")
+            val customSkeptic = repository.getActiveRoleForSlot("SKEPTIC")
+            val customSynthesizer = repository.getActiveRoleForSlot("SYNTHESIZER")
+            val pinnedCitations = repository.getCitationsForSessionOnce(sessionId)
+
+            val citationsBlock = if (pinnedCitations.isNotEmpty()) {
+                buildString {
+                    appendLine("\nПРИКРЕПЛЕННЫЕ НАУЧНЫЕ ПУБЛИКАЦИИ (arXiv / DOI) — ОПИРАЙСЯ НА НИХ И ЦИТИРУЙ:")
+                    pinnedCitations.take(6).forEachIndexed { idx, c ->
+                        val doiTag = if (!c.doi.isNullOrBlank()) ", DOI: ${c.doi}" else ""
+                        appendLine("[${idx + 1}] ${c.title} (${c.authors}, ${c.publishedYear}) [arXiv:${c.arxivId}$doiTag]: ${c.summary.take(220)}...")
+                    }
+                }
+            } else ""
+
+            val theoristTitle = customTheorist?.name ?: "Теоретик-Генератор"
+            val skepticTitle = customSkeptic?.name ?: "Скептик-Верификатор"
+            val synthesizerTitle = customSynthesizer?.name ?: "Прогрессор-Синтезатор"
+
             // STEP 1: THEORIST GENERATION
             onProgress(
                 ProgressState(
-                    step = "Агент 1 (Теоретик): Генерация фундаментальной гипотезы...",
+                    step = "Агент 1 ($theoristTitle): Генерация фундаментальной гипотезы...",
                     role = "THEORIST",
                     model = theoristModel
                 )
@@ -81,14 +101,20 @@ class ProgressorEngine(
                 domain = session.domain,
                 cycleNumber = cycleNumber,
                 userGuidance = userGuidance,
-                theoristModel = theoristModel
+                theoristModel = theoristModel,
+                citationsContext = citationsBlock,
+                customRoleName = customTheorist?.name
             )
 
-            val theoristResponseText = dispatchModelCall(theoristModel, theoristPrompt)
-                .getOrElse {
-                    delay(1200)
-                    generateSimulatedTheorist(session.topic, cycleNumber, userGuidance)
-                }
+            val theoristResponseText = dispatchModelCall(
+                model = theoristModel,
+                prompt = theoristPrompt,
+                customSystemPrompt = customTheorist?.systemPrompt,
+                temperature = customTheorist?.temperature?.toDouble() ?: 0.7
+            ).getOrElse {
+                delay(1200)
+                generateSimulatedTheorist(session.topic, cycleNumber, userGuidance)
+            }
 
             // Save Theorist message
             repository.insertMessage(
@@ -97,7 +123,7 @@ class ProgressorEngine(
                     cycleId = cycleId,
                     role = "THEORIST",
                     modelName = theoristModel,
-                    agentTitle = "Теоретик-Генератор",
+                    agentTitle = theoristTitle,
                     content = theoristResponseText,
                     timestamp = System.currentTimeMillis(),
                     turnNumber = 1
@@ -107,7 +133,7 @@ class ProgressorEngine(
             // STEP 2: SKEPTIC & VERIFICATION DESIGN
             onProgress(
                 ProgressState(
-                    step = "Агент 2 (Скептик): Попперовская критика и дизайн экспериментов...",
+                    step = "Агент 2 ($skepticTitle): Попперовская критика и дизайн экспериментов...",
                     role = "SKEPTIC",
                     model = skepticModel
                 )
@@ -116,14 +142,20 @@ class ProgressorEngine(
             val skepticPrompt = buildSkepticPrompt(
                 topic = session.topic,
                 theoristHypothesis = theoristResponseText,
-                skepticModel = skepticModel
+                skepticModel = skepticModel,
+                citationsContext = citationsBlock,
+                customRoleName = customSkeptic?.name
             )
 
-            val skepticResponseText = dispatchModelCall(skepticModel, skepticPrompt)
-                .getOrElse {
-                    delay(1300)
-                    generateSimulatedSkeptic(session.topic, theoristResponseText)
-                }
+            val skepticResponseText = dispatchModelCall(
+                model = skepticModel,
+                prompt = skepticPrompt,
+                customSystemPrompt = customSkeptic?.systemPrompt,
+                temperature = customSkeptic?.temperature?.toDouble() ?: 0.5
+            ).getOrElse {
+                delay(1300)
+                generateSimulatedSkeptic(session.topic, theoristResponseText)
+            }
 
             // Save Skeptic message
             repository.insertMessage(
@@ -132,7 +164,7 @@ class ProgressorEngine(
                     cycleId = cycleId,
                     role = "SKEPTIC",
                     modelName = skepticModel,
-                    agentTitle = "Скептик-Верификатор",
+                    agentTitle = skepticTitle,
                     content = skepticResponseText,
                     timestamp = System.currentTimeMillis(),
                     turnNumber = 2
@@ -142,7 +174,7 @@ class ProgressorEngine(
             // STEP 3: PROGRESSOR SYNTHESIZER
             onProgress(
                 ProgressState(
-                    step = "Агент 3 (Синтезатор): Интеграция выводов, расчет индекса и финализация...",
+                    step = "Агент 3 ($synthesizerTitle): Интеграция выводов, расчет индекса и финализация...",
                     role = "SYNTHESIZER",
                     model = synthesizerModel
                 )
@@ -152,14 +184,20 @@ class ProgressorEngine(
                 topic = session.topic,
                 theoristOutput = theoristResponseText,
                 skepticOutput = skepticResponseText,
-                synthesizerModel = synthesizerModel
+                synthesizerModel = synthesizerModel,
+                citationsContext = citationsBlock,
+                customRoleName = customSynthesizer?.name
             )
 
-            val synthesizerResponseText = dispatchModelCall(synthesizerModel, synthesizerPrompt)
-                .getOrElse {
-                    delay(1200)
-                    generateSimulatedSynthesizer(session.topic, theoristResponseText, skepticResponseText)
-                }
+            val synthesizerResponseText = dispatchModelCall(
+                model = synthesizerModel,
+                prompt = synthesizerPrompt,
+                customSystemPrompt = customSynthesizer?.systemPrompt,
+                temperature = customSynthesizer?.temperature?.toDouble() ?: 0.65
+            ).getOrElse {
+                delay(1200)
+                generateSimulatedSynthesizer(session.topic, theoristResponseText, skepticResponseText)
+            }
 
             // Save Synthesizer message
             repository.insertMessage(
@@ -168,7 +206,7 @@ class ProgressorEngine(
                     cycleId = cycleId,
                     role = "SYNTHESIZER",
                     modelName = synthesizerModel,
-                    agentTitle = "Прогрессор-Синтезатор",
+                    agentTitle = synthesizerTitle,
                     content = synthesizerResponseText,
                     timestamp = System.currentTimeMillis(),
                     turnNumber = 3
@@ -240,7 +278,9 @@ class ProgressorEngine(
 
     private suspend fun dispatchModelCall(
         model: String,
-        prompt: String
+        prompt: String,
+        customSystemPrompt: String? = null,
+        temperature: Double = 0.7
     ): Result<String> {
         if (settingsManager.isSimulationModeEnabled()) {
             return Result.failure(Exception("Режим симуляции включен"))
@@ -249,12 +289,12 @@ class ProgressorEngine(
         return when {
             model.startsWith("ollama/", ignoreCase = true) -> {
                 val cleanModel = model.removePrefix("ollama/")
-                callOllamaApi(cleanModel, prompt)
+                callOllamaApi(cleanModel, prompt, customSystemPrompt)
             }
             model.contains("gemini", ignoreCase = true) -> {
                 val geminiKey = settingsManager.getGeminiApiKey()
                 if (geminiKey.isNotEmpty()) {
-                    callGeminiApi(model, prompt, geminiKey)
+                    callGeminiApi(model, prompt, geminiKey, customSystemPrompt)
                 } else {
                     Result.failure(Exception("Ключ Gemini API не настроен"))
                 }
@@ -262,7 +302,7 @@ class ProgressorEngine(
             model.contains("/") -> { // e.g. "anthropic/claude-3.5-sonnet", "openai/gpt-4o"
                 val openRouterKey = settingsManager.getOpenRouterApiKey()
                 if (openRouterKey.isNotEmpty()) {
-                    callOpenRouterApi(model, prompt, openRouterKey)
+                    callOpenRouterApi(model, prompt, openRouterKey, customSystemPrompt, temperature)
                 } else {
                     Result.failure(Exception("Ключ OpenRouter API не настроен"))
                 }
@@ -270,7 +310,7 @@ class ProgressorEngine(
             else -> {
                 val veniceKey = settingsManager.getApiKey()
                 if (veniceKey.isNotEmpty()) {
-                    callVeniceApi(model, prompt, veniceKey)
+                    callVeniceApi(model, prompt, veniceKey, customSystemPrompt, temperature)
                 } else {
                     Result.failure(Exception("Ключ Venice.ai не настроен"))
                 }
@@ -354,22 +394,26 @@ class ProgressorEngine(
     private suspend fun callOpenRouterApi(
         model: String,
         prompt: String,
-        apiKey: String
+        apiKey: String,
+        customSystemPrompt: String? = null,
+        temperature: Double = 0.7
     ): Result<String> {
         return try {
+            val sysPrompt = customSystemPrompt?.takeIf { it.isNotBlank() }
+                ?: "Ты — участник научно-исследовательского консорциума Прогрессор (OpenRouter multi-model router). Отвечай на русском языке строго академически, структурированно и предметно."
             val request = OpenRouterChatRequest(
                 model = model,
                 messages = listOf(
                     OpenRouterMessageDto(
                         role = "system",
-                        content = "Ты — участник научно-исследовательского консорциума Прогрессор (OpenRouter multi-model router). Отвечай на русском языке строго академически, структурированно и предметно."
+                        content = sysPrompt
                     ),
                     OpenRouterMessageDto(
                         role = "user",
                         content = prompt
                     )
                 ),
-                temperature = 0.7,
+                temperature = temperature,
                 maxTokens = 2200
             )
 
@@ -393,17 +437,20 @@ class ProgressorEngine(
 
     private suspend fun callOllamaApi(
         model: String,
-        prompt: String
+        prompt: String,
+        customSystemPrompt: String? = null
     ): Result<String> {
         return try {
             val host = settingsManager.getOllamaHost()
             val url = "$host/api/chat"
+            val sysPrompt = customSystemPrompt?.takeIf { it.isNotBlank() }
+                ?: "Ты — участник научно-исследовательского консорциума Прогрессор (Локальная LLM Ollama). Отвечай на русском языке строго академически, структурированно и предметно."
             val request = OllamaChatRequest(
                 model = model,
                 messages = listOf(
                     OllamaChatMessageDto(
                         role = "system",
-                        content = "Ты — участник научно-исследовательского консорциума Прогрессор (Локальная LLM Ollama). Отвечай на русском языке строго академически, структурированно и предметно."
+                        content = sysPrompt
                     ),
                     OllamaChatMessageDto(
                         role = "user",
@@ -434,22 +481,26 @@ class ProgressorEngine(
     private suspend fun callVeniceApi(
         model: String,
         prompt: String,
-        apiKey: String
+        apiKey: String,
+        customSystemPrompt: String? = null,
+        temperature: Double = 0.7
     ): Result<String> {
         return try {
+            val sysPrompt = customSystemPrompt?.takeIf { it.isNotBlank() }
+                ?: "Ты — участник научно-исследовательского консорциума Прогрессор (Venice.ai Multi-Agent Council). Отвечай на русском языке строго академически, структурированно и предметно."
             val request = VeniceChatRequest(
                 model = model,
                 messages = listOf(
                     VeniceMessageDto(
                         role = "system",
-                        content = "Ты — участник научно-исследовательского консорциума Прогрессор (Venice.ai Multi-Agent Council). Отвечай на русском языке строго академически, структурированно и предметно."
+                        content = sysPrompt
                     ),
                     VeniceMessageDto(
                         role = "user",
                         content = prompt
                     )
                 ),
-                temperature = 0.7,
+                temperature = temperature,
                 maxTokens = 2200
             )
 
@@ -476,18 +527,21 @@ class ProgressorEngine(
         domain: String,
         cycleNumber: Int,
         userGuidance: String?,
-        theoristModel: String
+        theoristModel: String,
+        citationsContext: String = "",
+        customRoleName: String? = null
     ): String {
         val guidancePart = if (!userGuidance.isNullOrBlank()) {
             "\nУКАЗАНИЕ ОПЕРАТОРА-ЧЕЛОВЕКА:\n\"$userGuidance\"\nОбязательно интегрируй эти рамки в теорию!\n"
         } else ""
+        val roleHeader = customRoleName ?: "Теоретик-Генератор (Агент 1)"
 
         return """
-            РОЛЬ: Теоретик-Генератор (Агент 1) на базе нейросети $theoristModel.
+            РОЛЬ: $roleHeader на базе нейросети $theoristModel.
             НАУЧНАЯ ОБЛАСТЬ: $domain
             ТЕМАТИКА ИССЛЕДОВАНИЯ: $topic
             НОМЕР ЭВОЛЮЦИОННОГО ЦИКЛА: #$cycleNumber
-            $guidancePart
+            $guidancePart$citationsContext
             ЗАДАЧА:
             Сформулируй новую смелую научную гипотезу, открывающую прорыв в данной области. Твой анализ должен сочетать математическую и физическую строгость с новаторством.
             
@@ -503,12 +557,15 @@ class ProgressorEngine(
     private fun buildSkepticPrompt(
         topic: String,
         theoristHypothesis: String,
-        skepticModel: String
+        skepticModel: String,
+        citationsContext: String = "",
+        customRoleName: String? = null
     ): String {
+        val roleHeader = customRoleName ?: "Скептик-Верификатор и Архитектор Экспериментов (Агент 2)"
         return """
-            РОЛЬ: Скептик-Верификатор и Архитектор Экспериментов (Агент 2) на базе нейросети $skepticModel.
+            РОЛЬ: $roleHeader на базе нейросети $skepticModel.
             ТЕМАТИКА: $topic
-            
+            $citationsContext
             ВЫДВИНУТАЯ ТЕОРЕТИКОМ ГИПОТЕЗА:
             $theoristHypothesis
             
@@ -531,12 +588,15 @@ class ProgressorEngine(
         topic: String,
         theoristOutput: String,
         skepticOutput: String,
-        synthesizerModel: String
+        synthesizerModel: String,
+        citationsContext: String = "",
+        customRoleName: String? = null
     ): String {
+        val roleHeader = customRoleName ?: "Прогрессор-Синтезатор (Агент 3)"
         return """
-            РОЛЬ: Прогрессор-Синтезатор (Агент 3) на базе нейросети $synthesizerModel.
+            РОЛЬ: $roleHeader на базе нейросети $synthesizerModel.
             ТЕМАТИКА: $topic
-            
+            $citationsContext
             ГИПОТЕЗА ТЕОРЕТИКА:
             $theoristOutput
             

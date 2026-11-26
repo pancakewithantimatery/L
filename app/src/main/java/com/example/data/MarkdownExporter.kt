@@ -5,6 +5,7 @@ import android.net.Uri
 import com.example.data.local.AgentMessageEntity
 import com.example.data.local.EvolutionCycleEntity
 import com.example.data.local.ResearchSessionEntity
+import com.example.data.local.ScientificCitationEntity
 import com.example.data.local.ScientificHypothesisEntity
 import com.example.data.local.VerificationScenarioEntity
 import java.io.OutputStreamWriter
@@ -19,7 +20,8 @@ object MarkdownExporter {
         cycles: List<EvolutionCycleEntity>,
         messages: List<AgentMessageEntity>,
         hypotheses: List<ScientificHypothesisEntity>,
-        scenarios: List<VerificationScenarioEntity>
+        scenarios: List<VerificationScenarioEntity>,
+        citations: List<ScientificCitationEntity> = emptyList()
     ): String {
         val dateFormat = SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.getDefault())
         val sb = StringBuilder()
@@ -127,6 +129,16 @@ object MarkdownExporter {
             }
 
             sb.appendLine("---")
+            sb.appendLine()
+        }
+
+        if (citations.isNotEmpty()) {
+            sb.appendLine("## 📚 Библиография и источники (arXiv / DOI)")
+            sb.appendLine()
+            citations.forEachIndexed { idx, cit ->
+                val doiPart = if (!cit.doi.isNullOrBlank()) " • DOI: `${cit.doi}`" else ""
+                sb.appendLine("${idx + 1}. **${cit.title}** — *${cit.authors}* (${cit.publishedYear}). arXiv:`${cit.arxivId}`$doiPart • [PDF](${cit.pdfUrl})")
+            }
             sb.appendLine()
         }
 

@@ -32,27 +32,35 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.focus.FocusRequester
 import com.example.data.local.ResearchSessionEntity
+import com.example.ui.spatial.LocalFocusGraph
+import com.example.ui.spatial.focusOrderNode
+import com.example.ui.spatial.spatialInteractive
 import com.example.ui.theme.BorderSubtle
 import com.example.ui.theme.CyanAccent
 import com.example.ui.theme.DeepSpace
 import com.example.ui.theme.RoseWarning
-import com.example.ui.theme.SurfaceCard
-import com.example.ui.theme.SurfaceCardHighlight
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.VoidDark
+import com.example.ui.theme.spatialBorderColor
+import com.example.ui.theme.spatialCanvasColor
+import com.example.ui.theme.spatialCardColor
+import com.example.ui.theme.spatialCardHighlightColor
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun SessionsScreen(
     sessions: List<ResearchSessionEntity>,
@@ -60,12 +68,16 @@ fun SessionsScreen(
     onSelectSession: (Long) -> Unit,
     onDeleteSession: (Long) -> Unit,
     onOpenNewSessionDialog: () -> Unit,
+    isWideSpatialLayout: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    val focusGraph = LocalFocusGraph.current
+    val leftRailTarget = if (isWideSpatialLayout) focusGraph.navTopics else FocusRequester.Cancel
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(VoidDark)
+            .background(spatialCanvasColor())
             .padding(horizontal = 14.dp, vertical = 6.dp)
     ) {
         // Top Header
@@ -92,7 +104,16 @@ fun SessionsScreen(
                 onClick = onOpenNewSessionDialog,
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = CyanAccent),
-                modifier = Modifier.testTag("new_session_button")
+                modifier = Modifier
+                    .focusOrderNode(
+                        requester = focusGraph.sessionsNewBtn,
+                        previous = focusGraph.topSettings,
+                        up = focusGraph.topXrealToggle,
+                        left = leftRailTarget,
+                        right = FocusRequester.Cancel
+                    )
+                    .spatialInteractive(accentColor = CyanAccent, shape = RoundedCornerShape(10.dp))
+                    .testTag("new_session_button")
             ) {
                 Icon(
                     imageVector = Icons.Default.Add,
@@ -157,16 +178,17 @@ private fun SessionCardItem(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .spatialInteractive(accentColor = CyanAccent, shape = RoundedCornerShape(16.dp))
             .clickable(onClick = onSelect)
             .testTag("session_card_${session.id}"),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isActive) SurfaceCardHighlight else SurfaceCard
+            containerColor = if (isActive) spatialCardHighlightColor() else spatialCardColor()
         ),
         border = if (isActive) {
             androidx.compose.foundation.BorderStroke(1.5.dp, CyanAccent)
         } else {
-            androidx.compose.foundation.BorderStroke(0.5.dp, BorderSubtle)
+            androidx.compose.foundation.BorderStroke(0.5.dp, spatialBorderColor(BorderSubtle))
         }
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
@@ -229,6 +251,7 @@ private fun SessionCardItem(
                     onClick = onDelete,
                     modifier = Modifier
                         .size(32.dp)
+                        .spatialInteractive(accentColor = RoseWarning, shape = CircleShape)
                         .testTag("delete_session_${session.id}")
                 ) {
                     Icon(

@@ -68,4 +68,43 @@ interface ProgressorDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertScenario(scenario: VerificationScenarioEntity): Long
+
+    // Scientific Citations (arXiv / DOI)
+    @Query("SELECT * FROM scientific_citations WHERE sessionId = :sessionId ORDER BY createdAt DESC")
+    fun getCitationsForSession(sessionId: Long): Flow<List<ScientificCitationEntity>>
+
+    @Query("SELECT * FROM scientific_citations WHERE sessionId = :sessionId ORDER BY createdAt DESC")
+    suspend fun getCitationsForSessionOnce(sessionId: Long): List<ScientificCitationEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCitation(citation: ScientificCitationEntity): Long
+
+    @Query("DELETE FROM scientific_citations WHERE id = :citationId")
+    suspend fun deleteCitationById(citationId: Long)
+
+    // Custom Agent Roles
+    @Query("SELECT * FROM custom_agent_roles ORDER BY isActive DESC, createdAt DESC")
+    fun getAllCustomRoles(): Flow<List<CustomAgentRoleEntity>>
+
+    @Query("SELECT * FROM custom_agent_roles")
+    suspend fun getAllCustomRolesOnce(): List<CustomAgentRoleEntity>
+
+    @Query("SELECT * FROM custom_agent_roles WHERE baseSlot = :baseSlot AND isActive = 1 LIMIT 1")
+    suspend fun getActiveRoleForSlot(baseSlot: String): CustomAgentRoleEntity?
+
+    @Query("UPDATE custom_agent_roles SET isActive = 0 WHERE baseSlot = :baseSlot")
+    suspend fun deactivateRolesForSlot(baseSlot: String)
+
+    @Query("UPDATE custom_agent_roles SET isActive = :isActive WHERE id = :roleId")
+    suspend fun setRoleActive(roleId: Long, isActive: Boolean)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCustomRole(role: CustomAgentRoleEntity): Long
+
+    @Update
+    suspend fun updateCustomRole(role: CustomAgentRoleEntity)
+
+    @Query("DELETE FROM custom_agent_roles WHERE id = :roleId")
+    suspend fun deleteCustomRoleById(roleId: Long)
 }
+
